@@ -8,6 +8,7 @@ import (
     "fmt"
     "io/ioutil"
     "log"
+    "path/filepath"
     "sync/atomic"
     "time"
     "unsafe"
@@ -26,6 +27,8 @@ type Reloader struct {
 // pointer to Reloader if no error happend.
 func New(certPath, keyPath string, interval time.Duration) (*Reloader, error) {
     var err error
+    if certPath, err = filepath.Abs(certPath); err != nil { return nil, err }
+    if keyPath, err = filepath.Abs(keyPath); err != nil { return nil, err }
     r := &Reloader {
         certPath: certPath,
         keyPath:  keyPath,
