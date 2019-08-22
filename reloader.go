@@ -2,15 +2,15 @@
 package certreloader
 
 import (
-	"bytes"
 	"crypto/tls"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"path/filepath"
 	"sync/atomic"
 	"time"
 	"unsafe"
+
+	"github.com/cespare/xxhash"
 )
 
 // Reloader converts X.509 certificate and private key in PEM format to
@@ -20,8 +20,8 @@ import (
 type Reloader struct {
 	certPath string
 	keyPath  string
-	certPEM  []byte
-	keyPEM   []byte // BUG: plaintext private key left in memory
+	certDgst uint64
+	keyDgst  uint64
 	cert     *tls.Certificate
 	chStop   chan struct{}
 }
@@ -41,7 +41,7 @@ func New(certPath, keyPath string, interval time.Duration) (*Reloader, error) {
 		certPath: certPath,
 		keyPath:  keyPath,
 	}
-	if err = r.reload(); err != nil {
+	if err = r.reload(false); err != nil {
 		return nil, err
 	}
 	ticker := time.NewTicker(interval)
@@ -54,7 +54,7 @@ func New(certPath, keyPath string, interval time.Duration) (*Reloader, error) {
 	go func(ch <-chan time.Time) {
 		for {
 			<-ch
-			if err := r.reload(); err != nil {
+			if err := r.reload(true); err != nil {
 				log.Print(err) // TODO: first error only?
 			}
 		}
@@ -73,29 +73,42 @@ func (r *Reloader) Stop() {
 	}
 }
 
-func (r *Reloader) reload() error {
-	var (
-		err     error
-		certPEM []byte
-		keyPEM  []byte
-		cert    tls.Certificate
+func load(path string) (data []byte, dgst uint64, err error) {
+	data, err = ioutil.ReadFile(path)
+	if err != nil {
+		return
+	}
+	dgst = xxhash.Sum64(data)
+	return
+}
+
+func (r *Reloader) reload(isReload bool) (err error) {
+	certPEM, certDgst, err := load(r.certPath)
+	if err != nil {
+		return
+	}
+
+	keyPEM, keyDgst, err := load(r.keyPath)
+	if err != nil {
+		return
+	}
+
+	if isReload && certDgst == r.certDgst && keyDgst == r.keyDgst {
+		return
+	}
+
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return
+	}
+
+	r.certDgst = certDgst
+	r.keyDgst = keyDgst
+	atomic.StorePointer(
+		(*unsafe.Pointer)(unsafe.Pointer(&r.cert)),
+		unsafe.Pointer(&cert),
 	)
-	if certPEM, err = ioutil.ReadFile(r.certPath); err != nil {
-		return fmt.Errorf("unable to read certificate: %v", err)
-	}
-	if keyPEM, err = ioutil.ReadFile(r.keyPath); err != nil {
-		return fmt.Errorf("unable to read private key: %v", err)
-	}
-	if bytes.Equal(certPEM, r.certPEM) && bytes.Equal(keyPEM, r.keyPEM) {
-		return nil
-	}
-	if cert, err = tls.X509KeyPair(certPEM, keyPEM); err != nil {
-		return err
-	}
-	r.certPEM = certPEM
-	r.keyPEM = keyPEM
-	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&r.cert)), unsafe.Pointer(&cert))
-	return nil
+	return
 }
 
 // Get currently loaded tls.Certificate.
