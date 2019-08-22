@@ -1,5 +1,4 @@
-// Reload X.509 certificate / private key periodically. Reload failure will be
-// logged and will not affect previously loaded one.
+// Package certreloader implements a periodic X.509 certificate reloader.
 package certreloader
 
 import (
@@ -14,6 +13,10 @@ import (
 	"unsafe"
 )
 
+// Reloader converts X.509 certificate and private key in PEM format to
+// tls.Certificate. It periodically checks their contents in background, and
+// tries to reload atomically when changes were detected. Reload failure will
+// be logged and will not break previously loaded one.
 type Reloader struct {
 	certPath string
 	keyPath  string
@@ -23,8 +26,9 @@ type Reloader struct {
 	chStop   chan struct{}
 }
 
-// Load and parse certificate and private key in X.509 PEM format. Return a
-// pointer to Reloader if no error happend.
+// New return a new Reloader. The path to certificate / private key will be
+// converted to absolute form internally. If any error happened during the first
+// reload, New will return a nil Reloader and non-nil error.
 func New(certPath, keyPath string, interval time.Duration) (*Reloader, error) {
 	var err error
 	if certPath, err = filepath.Abs(certPath); err != nil {
@@ -58,7 +62,7 @@ func New(certPath, keyPath string, interval time.Duration) (*Reloader, error) {
 	return r, nil
 }
 
-// Stop futher reloading. A stopped reloader cannot be started again. Loaded
+// Stop further reloading. A stopped reloader cannot be started again. Loaded
 // certificate is still available. Call this method if you don't want resource
 // leak.
 func (r *Reloader) Stop() {
@@ -94,7 +98,7 @@ func (r *Reloader) reload() error {
 	return nil
 }
 
-// Get current *tls.Certificate.
+// Get currently loaded tls.Certificate.
 func (r *Reloader) Get() *tls.Certificate {
 	return (*tls.Certificate)(atomic.LoadPointer(
 		(*unsafe.Pointer)(unsafe.Pointer(&r.cert))))
