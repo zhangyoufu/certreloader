@@ -3,6 +3,7 @@ package certreloader
 
 import (
 	"crypto/tls"
+	"errors"
 	"io/ioutil"
 	"log"
 	"path/filepath"
@@ -26,10 +27,26 @@ type Reloader struct {
 	chStop   chan struct{}
 }
 
+var (
+	errInvalidCertPath       = errors.New("invalid cert path")
+	errInvalidKeyPath        = errors.New("invalid key path")
+	errInvalidReloadInterval = errors.New("invalid reload interval")
+)
+
 // New return a new Reloader. The path to certificate / private key will be
 // converted to absolute form internally. If any error happened during the first
 // reload, New will return a nil Reloader and non-nil error.
 func New(certPath, keyPath string, interval time.Duration) (*Reloader, error) {
+	if certPath == "" {
+		return nil, errInvalidCertPath
+	}
+	if keyPath == "" {
+		return nil, errInvalidKeyPath
+	}
+	if interval <= 0 {
+		return nil, errInvalidReloadInterval
+	}
+
 	var err error
 	if certPath, err = filepath.Abs(certPath); err != nil {
 		return nil, err
